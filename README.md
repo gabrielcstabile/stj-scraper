@@ -75,7 +75,6 @@ stj-scraper/
 git clone <url-do-repo> stj-scraper
 cd stj-scraper
 
-uv venv
 uv sync --extra dev
 ```
 
@@ -86,13 +85,13 @@ uv sync --extra dev
 ### Coletar um processo
 
 ```bash
-make run PROCESSO=12345
+make run PROCESSO=<numero_do_processo>
 ```
 
 Equivalente a:
 
 ```bash
-uv run python -m stj_scraper.scraper --numero 12345
+uv run python -m stj_scraper.scraper --numero <numero_do_processo>
 ```
 
 O comando:
@@ -184,3 +183,5 @@ STJ (servidor)
                     → objeto Processo
                         └── SQLite via SQLAlchemy (upsert)
 ```
+
+
