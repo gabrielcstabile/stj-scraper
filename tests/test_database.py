@@ -1,6 +1,6 @@
 """Testes para a camada de persistência — sempre usa banco em memória."""
 
-from sqlalchemy import create_engine
+from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -8,7 +8,7 @@ from stj_scraper.database import Base, ProcessoORM, salvar_processo
 from stj_scraper.models import Movimentacao, Parte, Processo
 
 
-def _make_engine():
+def _make_engine() -> Engine:
     """Cria engine SQLite em memória com pool estático (conexão única compartilhada)."""
     return create_engine(
         "sqlite:///:memory:",

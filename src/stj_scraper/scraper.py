@@ -2,6 +2,7 @@
 
 import argparse
 from pathlib import Path
+from typing import Any
 
 from stj_scraper.client import STJClient
 from stj_scraper.database import salvar_processo
@@ -61,7 +62,7 @@ class STJScraper:
     # Métodos privados de parsing
     # ------------------------------------------------------------------
 
-    def _extrair_dados_basicos(self, payload: dict) -> dict:
+    def _extrair_dados_basicos(self, payload: dict[str, Any]) -> dict[str, str]:
         """Extrai classe e assunto do payload da resposta."""
         classe = payload.get("classe")
         assunto = payload.get("assunto")
@@ -75,7 +76,7 @@ class STJScraper:
 
         return {"classe": classe, "assunto": assunto}
 
-    def _extrair_partes(self, payload: dict) -> list[Parte]:
+    def _extrair_partes(self, payload: dict[str, Any]) -> list[Parte]:
         """Extrai a lista de partes do payload da resposta."""
         partes_raw = payload.get("partes", [])
         partes: list[Parte] = []
@@ -88,7 +89,7 @@ class STJScraper:
 
         return partes
 
-    def _extrair_movimentacoes(self, payload: dict) -> list[Movimentacao]:
+    def _extrair_movimentacoes(self, payload: dict[str, Any]) -> list[Movimentacao]:
         """Extrai a lista de movimentações do payload da resposta."""
         movs_raw = payload.get("movimentacoes", [])
         movimentacoes: list[Movimentacao] = []
