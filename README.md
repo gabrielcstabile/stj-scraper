@@ -1,7 +1,6 @@
 # STJ Scraper
 
-Web scraper para coleta de dados processuais do Superior Tribunal de Justiça (STJ),
-desenvolvido como desafio técnico para a vaga de **Data Acquisition Engineer Pleno — JusBrasil**.
+Web scraper para coleta de dados processuais do Superior Tribunal de Justiça (STJ).
 
 ---
 
@@ -18,7 +17,7 @@ O scraper acessa o portal público do STJ em `https://processo.stj.jus.br/` e co
 Os dados coletados são:
 - Validados com **Pydantic v2** antes de qualquer persistência
 - Salvos em **SQLite** via **SQLAlchemy 2** com upsert (evita duplicações)
-- Exportados como **JSON** em `data/<numero>.json`
+- Armazenados em cache como **HTML bruto** em `data/<numero>.html`
 - Registrados em **log** estruturado (terminal + arquivo `logs/scraper.log`)
 
 ---
@@ -31,7 +30,7 @@ stj-scraper/
 │   └── stj_scraper/
 │       ├── __init__.py
 │       ├── client.py      # Sessão HTTP, headers de navegador, retry com backoff
-│       ├── scraper.py     # Lógica de coleta, parsing e exportação JSON
+│       ├── scraper.py     # Lógica de coleta, parsing HTML e persistência
 │       ├── models.py      # Modelos Pydantic (Processo, Parte, Movimentacao)
 │       ├── database.py    # SQLite + SQLAlchemy — tabelas e upsert
 │       └── logger.py      # Configuração centralizada de logs
@@ -39,7 +38,7 @@ stj-scraper/
 │   ├── test_models.py     # Validação dos modelos Pydantic
 │   ├── test_database.py   # Upsert e deduplicação (banco em memória)
 │   └── test_scraper.py    # Parsing com mock do cliente HTTP
-├── data/                  # JSONs gerados em execução (gitignored)
+├── data/                  # HTMLs e banco gerados em execução (gitignored)
 ├── logs/                  # scraper.log gerado em execução (gitignored)
 ├── pyproject.toml
 ├── Makefile
@@ -53,13 +52,13 @@ stj-scraper/
 | Componente     | Ferramenta                                                  |
 |----------------|-------------------------------------------------------------|
 | HTTP Client    | `httpx` — HTTP/2, sessão persistente, API moderna           |
+| HTML Parsing   | `beautifulsoup4` + `lxml`                                   |
 | Validação      | `pydantic` v2 — validação automática de tipos e formatos    |
 | Banco de dados | `sqlalchemy` 2 + `sqlite3` nativo                           |
 | Logging        | `logging` nativo — dois handlers (terminal + arquivo)       |
 | Testes         | `pytest` + `pytest-mock`                                    |
 | Linting        | `ruff`                                                      |
 | Dependências   | `uv` + `pyproject.toml`                                     |
-| Ambiente       | `pyenv` + `.python-version`                                 |
 
 ---
 
@@ -73,11 +72,9 @@ stj-scraper/
 ## Instalação
 
 ```bash
-# Clonar o repositório
 git clone <url-do-repo> stj-scraper
 cd stj-scraper
 
-# Criar ambiente virtual e instalar dependências
 uv venv
 uv sync --extra dev
 ```
@@ -99,10 +96,10 @@ uv run python -m stj_scraper.scraper --numero 12345
 ```
 
 O comando:
-1. Busca o processo no STJ via requisição HTTP direta ao endpoint XHR
-2. Valida os dados com Pydantic
-3. Salva no banco SQLite (`data/stj.db`) com upsert
-4. Exporta JSON em `data/<numero>.json`
+1. Busca o processo no STJ via requisição HTTP GET
+2. Salva o HTML bruto em `data/<numero>.html` (cache/debug)
+3. Extrai os dados com BeautifulSoup e valida com Pydantic
+4. Salva no banco SQLite (`data/stj.db`) com upsert
 
 ### Rodar os testes
 
@@ -127,42 +124,37 @@ make clean
 
 ## Decisões Técnicas
 
-### Por que httpx e não requests?
+### httpx — cliente HTTP
 
-`httpx` tem API praticamente idêntica ao `requests`, suporta HTTP/2 nativamente e mantém
-sessão persistente com cookies — essencial para não ser bloqueado pelo WAF do STJ.
+`httpx` mantém sessão persistente com cookies entre requisições, suporta HTTP/2
+nativamente e implementa backoff exponencial (1 s → 2 s → 4 s) com até 3 tentativas,
+cobrindo timeouts e instabilidades do serviço sem intervenção manual.
 
-### Por que não usar scraping de HTML (BeautifulSoup)?
+### BeautifulSoup + lxml — parsing HTML
 
-O portal do STJ é uma **SPA (Single Page Application)**. O HTML inicial está vazio —
-os dados só aparecem após o JavaScript executar chamadas XHR assíncronas. Capturar
-esses dados via browser real (Playwright/Selenium) adicionaria complexidade desnecessária.
-A solução adotada intercepta as chamadas XHR diretamente, replicando as requisições HTTP
-que o browser faz, obtendo os dados em JSON de forma mais simples e robusta.
+O STJ retorna o HTML completo do processo em uma única requisição GET — o conteúdo
+não depende de JavaScript para renderizar. O parser `lxml` é o mais rápido disponível
+no BeautifulSoup para documentos grandes, e a extração por `id` de elemento torna o
+código robusto a mudanças de layout periféricas.
 
-### Por que não usar Scrapy?
+### Pydantic v2 — validação
 
-Scrapy é otimizado para crawling de HTML estático em escala. Para uma SPA com XHR,
-precisaria de `scrapy-playwright`, adicionando complexidade desnecessária. `httpx` direto
-demonstra maior domínio técnico dos fundamentos de HTTP.
+Todos os dados extraídos passam por validação automática de tipos e formatos (incluindo
+`date`) antes de qualquer gravação em banco ou arquivo. Erros de estrutura são detectados
+cedo, na camada de domínio.
 
-### Retry com backoff exponencial
+### SQLAlchemy 2 + upsert — persistência
 
-O cliente implementa até 3 tentativas com espera de 1s, 2s e 4s entre elas, cobrindo
-instabilidades comuns do serviço (timeout, 503).
+A função `salvar_processo` verifica o número do processo antes de gravar: se já existe,
+atualiza os dados e reinicia as coleções de partes e movimentações; se não existe,
+insere. O scraper é idempotente — pode ser executado múltiplas vezes para o mesmo
+processo sem criar registros duplicados.
 
-### Upsert no banco
-
-A função `salvar_processo` verifica pelo número do processo: se já existe, atualiza
-os dados e reinicia as coleções de partes e movimentações (evita duplicação); se não
-existe, insere. Isso torna o scraper idempotente — pode ser executado múltiplas vezes
-para o mesmo processo sem criar registros duplicados.
-
-### Injeção de dependência no Scraper
+### Injeção de dependência no STJScraper
 
 `STJScraper` recebe `STJClient` no construtor em vez de instanciá-lo internamente.
-Isso permite substituir o cliente por um mock nos testes sem precisar de monkeypatch
-na classe inteira.
+Nos testes, o cliente é substituído por um `MagicMock` sem necessidade de monkeypatch
+na classe inteira, mantendo os testes isolados e rápidos.
 
 ---
 
@@ -174,9 +166,9 @@ na classe inteira.
 |----------------------|--------------------------------------------------------------|
 | `test_models.py`     | Validação de dados válidos, datas inválidas, campos ausentes |
 | `test_database.py`   | Inserção, upsert sem duplicação, atualização de dados        |
-| `test_scraper.py`    | Parsing correto, payload vazio, campo ausente gera warning   |
+| `test_scraper.py`    | Parsing correto, HTML vazio, campo ausente gera warning      |
 
-O banco de dados nos testes usa sempre `sqlite:///:memory:` com `StaticPool` —
+O banco de dados nos testes usa `sqlite:///:memory:` com `StaticPool` —
 nunca toca o banco real em `data/stj.db`.
 
 ---
@@ -186,9 +178,9 @@ nunca toca o banco real em `data/stj.db`.
 ```
 STJ (servidor)
     → httpx (requisição HTTP com headers de navegador)
-        → JSON bruto
-            → Pydantic (valida e estrutura os dados)
-                → objeto Processo
-                    ├── SQLite via SQLAlchemy (upsert)
-                    └── JSON em data/<numero>.json
+        → HTML bruto  →  data/<numero>.html (cache/debug)
+            → BeautifulSoup + lxml (parse e extração)
+                → Pydantic (valida e estrutura os dados)
+                    → objeto Processo
+                        └── SQLite via SQLAlchemy (upsert)
 ```

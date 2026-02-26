@@ -6,26 +6,51 @@ from stj_scraper.client import STJClient
 from stj_scraper.models import Processo
 from stj_scraper.scraper import STJScraper
 
+_HTML_VALIDO = """
+<html><body>
+  <span id="idSpanClasseDescricao">Recurso Especial</span>
+  <span id="idProcessoDetalheAssuntos">Direito Civil</span>
+  <div id="idDetalhesPartesAdvogadosProcuradores">
+    <div class="classDivLinhaDetalhes">
+      <span class="classSpanDetalhesLabel">Requerente:</span>
+      <span class="classSpanDetalhesTexto">João Silva</span>
+    </div>
+    <div class="classDivLinhaDetalhes">
+      <span class="classSpanDetalhesLabel">Requerido:</span>
+      <span class="classSpanDetalhesTexto">Maria Souza</span>
+    </div>
+  </div>
+  <div id="idDivFases">
+    <div class="classDivFaseLinha">
+      <span class="classSpanFaseData">15/01/2024</span>
+      <span class="classSpanFaseTexto">Distribuído
+        <span class="clsFaseCodigoConselhoNacionalJustica">(1)</span>
+      </span>
+    </div>
+    <div class="classDivFaseLinha">
+      <span class="classSpanFaseData">10/03/2024</span>
+      <span class="classSpanFaseTexto">Julgado
+        <span class="clsFaseCodigoConselhoNacionalJustica">(2)</span>
+      </span>
+    </div>
+  </div>
+</body></html>
+"""
 
-def _mock_response(payload: dict) -> MagicMock:
-    """Cria um mock de httpx.Response com payload JSON."""
+_HTML_VAZIO = "<html><body></body></html>"
+
+_HTML_SEM_CLASSE = """
+<html><body>
+  <span id="idProcessoDetalheAssuntos">Direito Penal</span>
+</body></html>
+"""
+
+
+def _mock_response(html: str) -> MagicMock:
+    """Cria um mock de httpx.Response com HTML."""
     response = MagicMock()
-    response.json.return_value = payload
+    response.text = html
     return response
-
-
-_PAYLOAD_VALIDO = {
-    "classe": "Recurso Especial",
-    "assunto": "Direito Civil",
-    "partes": [
-        {"nome": "João Silva", "tipo": "Requerente"},
-        {"nome": "Maria Souza", "tipo": "Requerido"},
-    ],
-    "movimentacoes": [
-        {"data": "2024-01-15", "descricao": "Distribuído"},
-        {"data": "2024-03-10", "descricao": "Julgado"},
-    ],
-}
 
 
 def test_parsing_correto(tmp_path, mocker) -> None:
@@ -33,7 +58,7 @@ def test_parsing_correto(tmp_path, mocker) -> None:
     mocker.patch("stj_scraper.scraper._DATA_DIR", tmp_path)
 
     client = MagicMock(spec=STJClient)
-    client.get.return_value = _mock_response(_PAYLOAD_VALIDO)
+    client.get.return_value = _mock_response(_HTML_VALIDO)
 
     scraper = STJScraper(client)
     processo = scraper.buscar_processo("12345")
@@ -48,11 +73,11 @@ def test_parsing_correto(tmp_path, mocker) -> None:
 
 
 def test_processo_nao_encontrado(tmp_path, mocker) -> None:
-    """Testa comportamento quando o processo retorna payload vazio."""
+    """Testa comportamento quando o processo retorna HTML sem conteúdo relevante."""
     mocker.patch("stj_scraper.scraper._DATA_DIR", tmp_path)
 
     client = MagicMock(spec=STJClient)
-    client.get.return_value = _mock_response({})
+    client.get.return_value = _mock_response(_HTML_VAZIO)
 
     scraper = STJScraper(client)
     processo = scraper.buscar_processo("99999")
@@ -66,17 +91,11 @@ def test_processo_nao_encontrado(tmp_path, mocker) -> None:
 
 
 def test_campo_ausente_loga_warning(tmp_path, mocker) -> None:
-    """Testa que campo ausente no payload gera warning (sem lançar exceção)."""
+    """Testa que campo ausente no HTML gera warning (sem lançar exceção)."""
     mocker.patch("stj_scraper.scraper._DATA_DIR", tmp_path)
 
-    payload_sem_classe = {
-        "assunto": "Direito Penal",
-        "partes": [],
-        "movimentacoes": [],
-    }
-
     client = MagicMock(spec=STJClient)
-    client.get.return_value = _mock_response(payload_sem_classe)
+    client.get.return_value = _mock_response(_HTML_SEM_CLASSE)
 
     mock_logger = mocker.patch("stj_scraper.scraper.logger")
 
